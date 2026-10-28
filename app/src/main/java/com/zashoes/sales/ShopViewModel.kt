@@ -46,14 +46,16 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // Saves the bill, its items, and decreases stock — all in one transaction
-    // so a sale can never be half-saved.
-    fun makeSale(customer: String, paid: Int, cart: List<CartLine>, onDone: () -> Unit) {
+    // so a sale can never be half-saved. Returns the saved bill + its lines
+    // so the UI can show the receipt right away.
+    fun makeSale(customer: String, paid: Int, cart: List<CartLine>, onDone: (Sale, List<CartLine>) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val total = cart.sumOf { it.product.salePrice * it.qty }
+            var savedSale = Sale(date = now, customer = customer, total = total, paid = paid)
             db.withTransaction {
-                val total = cart.sumOf { it.product.salePrice * it.qty }
-                val saleId = db.saleDao().insertSale(
-                    Sale(date = System.currentTimeMillis(), customer = customer, total = total, paid = paid)
-                )
+                val saleId = db.saleDao().insertSale(savedSale)
+                savedSale = savedSale.copy(id = saleId)
                 db.saleDao().insertItems(
                     cart.map {
                         SaleItem(
@@ -71,7 +73,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
                     db.stockDao().upsert(Stock(line.product.id, line.size, left.coerceAtLeast(0)))
                 }
             }
-            withContext(Dispatchers.Main) { onDone() }
+            withContext(Dispatchers.Main) { onDone(savedSale, cart) }
         }
     }
 

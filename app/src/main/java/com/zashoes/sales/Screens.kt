@@ -1,5 +1,7 @@
 package com.zashoes.sales
 
+import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,8 +15,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -26,7 +30,9 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -36,6 +42,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
@@ -58,6 +66,24 @@ fun startOfDayMillis(): Long {
     return cal.timeInMillis
 }
 
+fun startOfMonthMillis(): Long {
+    val cal = Calendar.getInstance()
+    cal.set(Calendar.DAY_OF_MONTH, 1)
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    return cal.timeInMillis
+}
+
+fun shareText(context: Context, text: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(intent, "Receipt Share karein"))
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ShopApp(vm: ShopViewModel) {
@@ -74,6 +100,16 @@ fun ShopApp(vm: ShopViewModel) {
         Triple("khata", "📒", "Khata")
     )
     Scaffold(
+        containerColor = Color(0xFFFFF8E1),
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text("ZA Shoes") },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = Color(0xFF1B5E20),
+                    titleContentColor = Color.White
+                )
+            )
+        },
         bottomBar = {
             NavigationBar {
                 tabs.forEach { (route, icon, label) ->
@@ -113,12 +149,22 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
     val items by vm.allItems.collectAsState()
     val products by vm.products.collectAsState()
     val stock by vm.allStock.collectAsState()
+    val context = LocalContext.current
+    var receiptSale by remember { mutableStateOf<Sale?>(null) }
+
     val start = remember { startOfDayMillis() }
+    val monthStart = remember { startOfMonthMillis() }
     val todaySales = sales.filter { it.date >= start }
     val todayIds = todaySales.map { it.id }.toSet()
+    val monthSales = sales.filter { it.date >= monthStart }
+    val monthIds = monthSales.map { it.id }.toSet()
     val costMap = products.associate { it.id to it.costPrice }
+    val nameMap = products.associate { it.id to it.name }
     val todayTotal = todaySales.sumOf { it.total }
     val todayProfit = items.filter { it.saleId in todayIds }
+        .sumOf { (it.price - (costMap[it.productId] ?: 0)) * it.qty }
+    val monthTotal = monthSales.sumOf { it.total }
+    val monthProfit = items.filter { it.saleId in monthIds }
         .sumOf { (it.price - (costMap[it.productId] ?: 0)) * it.qty }
     val totalUdhaar = sales.sumOf { vm.balanceOf(it, payments) }
     val lowStock = stock.count { it.qty <= 2 }
@@ -126,12 +172,15 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)
     ) {
-        Text("ZA Shoes", style = MaterialTheme.typography.headlineMedium)
         Text("Aaj ka hisaab", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatCard("Aaj ki Sale", "Rs $todayTotal", Modifier.weight(1f))
             StatCard("Aaj ka Profit", "Rs $todayProfit", Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatCard("Is Mahine ki Sale", "Rs $monthTotal", Modifier.weight(1f))
+            StatCard("Is Mahine ka Profit", "Rs $monthProfit", Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatCard("Total Udhaar", "Rs $totalUdhaar", Modifier.weight(1f))
@@ -144,10 +193,13 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
             OutlinedButton(onClick = { go("khata") }) { Text("Khata") }
         }
         Spacer(Modifier.height(12.dp))
-        Text("Haal ki Salein", style = MaterialTheme.typography.titleMedium)
+        Text("Haal ki Salein (receipt dekhne ke liye dabayein)", style = MaterialTheme.typography.titleMedium)
         sales.take(10).forEach { s ->
             val bal = vm.balanceOf(s, payments)
-            Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Card(
+                onClick = { receiptSale = s },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            ) {
                 Column(Modifier.padding(10.dp)) {
                     Text(if (s.customer.isBlank()) "Walk-in" else s.customer, style = MaterialTheme.typography.titleSmall)
                     Text(fmtDate(s.date), style = MaterialTheme.typography.bodySmall)
@@ -159,6 +211,30 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
             }
         }
     }
+
+    val rs = receiptSale
+    if (rs != null) {
+        val bal = vm.balanceOf(rs, payments)
+        val lines = items.filter { it.saleId == rs.id }.map { item ->
+            "${nameMap[item.productId] ?: "Article"} (Size ${item.size}) x ${item.qty} = Rs ${item.price * item.qty}"
+        }
+        val text = buildReceiptText(rs.date, lines, rs.total, rs.paid, bal)
+        AlertDialog(
+            onDismissRequest = { receiptSale = null },
+            title = { Text("Receipt — ZA Shoes") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(text)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { shareText(context, text) }) { Text("Share karein") }
+            },
+            dismissButton = {
+                TextButton(onClick = { receiptSale = null }) { Text("Band karein") }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -166,6 +242,7 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
 fun SaleScreen(vm: ShopViewModel) {
     val products by vm.products.collectAsState()
     val stock by vm.allStock.collectAsState()
+    val context = LocalContext.current
     var selected by remember { mutableStateOf<Product?>(null) }
     var expanded by remember { mutableStateOf(false) }
     var size by remember { mutableStateOf("") }
@@ -173,6 +250,7 @@ fun SaleScreen(vm: ShopViewModel) {
     var customer by remember { mutableStateOf("") }
     var paid by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
+    var lastReceipt by remember { mutableStateOf<Pair<Sale, List<CartLine>>?>(null) }
     val cart = remember { mutableStateListOf<CartLine>() }
 
     val sizes = selected?.let { p ->
@@ -231,16 +309,16 @@ fun SaleScreen(vm: ShopViewModel) {
                     val p = selected
                     if (p == null || size.isEmpty() || qty < 1) {
                         message = "Pehle article, size aur miqdaar chunein."
-                        return@Button
-                    }
-                    val existing = cart.indexOfFirst { it.product.id == p.id && it.size == size }
-                    if (existing >= 0) {
-                        val old = cart[existing]
-                        cart[existing] = old.copy(qty = (old.qty + qty).coerceAtMost(stockQty))
                     } else {
-                        cart.add(CartLine(p, size, qty))
+                        val existing = cart.indexOfFirst { it.product.id == p.id && it.size == size }
+                        if (existing >= 0) {
+                            val old = cart[existing]
+                            cart[existing] = old.copy(qty = (old.qty + qty).coerceAtMost(stockQty))
+                        } else {
+                            cart.add(CartLine(p, size, qty))
+                        }
+                        message = ""
                     }
-                    message = ""
                 }) { Text("Cart mein daalo") }
             }
         }
@@ -279,25 +357,29 @@ fun SaleScreen(vm: ShopViewModel) {
             onClick = {
                 if (cart.isEmpty()) {
                     message = "Cart khaali hai."
-                    return@Button
-                }
-                for (line in cart) {
-                    val left = stock.find { it.productId == line.product.id && it.size == line.size }?.qty ?: 0
-                    if (line.qty > left) {
-                        message = "Stock kam hai: ${line.product.name} (Size ${line.size})"
-                        return@Button
+                } else {
+                    var stockProblem: String? = null
+                    for (line in cart) {
+                        val left = stock.find { it.productId == line.product.id && it.size == line.size }?.qty ?: 0
+                        if (line.qty > left) {
+                            stockProblem = "Stock kam hai: ${line.product.name} (Size ${line.size})"
+                        }
                     }
-                }
-                if (balance > 0 && customer.isBlank()) {
-                    message = "Udhaar ke liye customer ka naam zaroori hai."
-                    return@Button
-                }
-                val savedTotal = total
-                vm.makeSale(customer.trim(), paidInt, cart.toList()) {
-                    cart.clear()
-                    customer = ""
-                    paid = ""
-                    message = "Sale save ho gayi! Total Rs $savedTotal"
+                    if (stockProblem != null) {
+                        message = stockProblem
+                    } else if (balance > 0 && customer.isBlank()) {
+                        message = "Udhaar ke liye customer ka naam zaroori hai."
+                    } else {
+                        val savedTotal = total
+                        val savedCart = cart.toList()
+                        vm.makeSale(customer.trim(), paidInt, savedCart) { sale, lines ->
+                            cart.clear()
+                            customer = ""
+                            paid = ""
+                            lastReceipt = sale to lines
+                            message = "Sale save ho gayi! Total Rs $savedTotal"
+                        }
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth()
@@ -305,6 +387,30 @@ fun SaleScreen(vm: ShopViewModel) {
         if (message.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Text(message, color = MaterialTheme.colorScheme.primary)
+        }
+        val receipt = lastReceipt
+        if (receipt != null) {
+            val (sale, lines) = receipt
+            val bal = sale.total - sale.paid
+            val text = buildReceiptText(
+                sale.date,
+                lines.map { "${it.product.name} (Size ${it.size}) x ${it.qty} = Rs ${it.product.salePrice * it.qty}" },
+                sale.total,
+                sale.paid,
+                bal
+            )
+            Spacer(Modifier.height(12.dp))
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Receipt — ZA Shoes", style = MaterialTheme.typography.titleMedium)
+                    Text(text)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { shareText(context, text) }) { Text("Receipt Share karein") }
+                        OutlinedButton(onClick = { lastReceipt = null }) { Text("Band karein") }
+                    }
+                }
+            }
         }
     }
 }
@@ -316,7 +422,9 @@ fun StockScreen(vm: ShopViewModel) {
     var name by remember { mutableStateOf("") }
     var cost by remember { mutableStateOf("") }
     var sale by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
+    val filtered = products.filter { it.name.contains(query, ignoreCase = true) }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Text("Stock", style = MaterialTheme.typography.headlineMedium)
@@ -350,18 +458,25 @@ fun StockScreen(vm: ShopViewModel) {
             val s = sale.toIntOrNull()
             if (name.isBlank() || c == null || s == null || c <= 0 || s <= 0) {
                 message = "Naam aur dono price sahi likhein."
-                return@Button
+            } else {
+                vm.addProduct(name.trim(), c, s)
+                name = ""
+                cost = ""
+                sale = ""
+                message = "Article add ho gaya."
             }
-            vm.addProduct(name.trim(), c, s)
-            name = ""
-            cost = ""
-            sale = ""
-            message = "Article add ho gaya."
         }) { Text("Article Add karo") }
         if (message.isNotEmpty()) Text(message)
         Spacer(Modifier.height(8.dp))
+        TextField(
+            value = query,
+            onValueChange = { query = it },
+            label = { Text("Article dhoondhein") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
         LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-            items(products, key = { it.id }) { p ->
+            items(filtered, key = { it.id }) { p ->
                 ProductStockCard(p, stock.filter { it.productId == p.id }) { sz, q ->
                     vm.addStock(p.id, sz, q)
                 }
@@ -396,10 +511,11 @@ fun ProductStockCard(p: Product, stock: List<Stock>, onAdd: (String, Int) -> Uni
                 )
                 Button(onClick = {
                     val q = qty.toIntOrNull()
-                    if (size.isBlank() || q == null || q <= 0) return@Button
-                    onAdd(size.trim(), q)
-                    size = ""
-                    qty = ""
+                    if (size.isNotBlank() && q != null && q > 0) {
+                        onAdd(size.trim(), q)
+                        size = ""
+                        qty = ""
+                    }
                 }) { Text("+") }
             }
         }
@@ -451,12 +567,12 @@ fun KhataScreen(vm: ShopViewModel) {
                                                 val amt = payAmount.toIntOrNull()
                                                 if (amt == null || amt <= 0 || amt > bal) {
                                                     message = "Raqam 1 se $bal ke darmiyan likhein."
-                                                    return@Button
+                                                } else {
+                                                    vm.recordPayment(s.id, amt)
+                                                    paySaleId = null
+                                                    payAmount = ""
+                                                    message = "Wusooli save ho gayi."
                                                 }
-                                                vm.recordPayment(s.id, amt)
-                                                paySaleId = null
-                                                payAmount = ""
-                                                message = "Wusooli save ho gayi."
                                             }) { Text("Jama karo") }
                                         }
                                     } else {
