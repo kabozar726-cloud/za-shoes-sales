@@ -231,7 +231,7 @@ fun SaleScreen(vm: ShopViewModel) {
                     val p = selected
                     if (p == null || size.isEmpty() || qty < 1) {
                         message = "Pehle article, size aur miqdaar chunein."
-                        return@onClick
+                        return@Button
                     }
                     val existing = cart.indexOfFirst { it.product.id == p.id && it.size == size }
                     if (existing >= 0) {
@@ -279,18 +279,18 @@ fun SaleScreen(vm: ShopViewModel) {
             onClick = {
                 if (cart.isEmpty()) {
                     message = "Cart khaali hai."
-                    return@onClick
+                    return@Button
                 }
                 for (line in cart) {
                     val left = stock.find { it.productId == line.product.id && it.size == line.size }?.qty ?: 0
                     if (line.qty > left) {
                         message = "Stock kam hai: ${line.product.name} (Size ${line.size})"
-                        return@onClick
+                        return@Button
                     }
                 }
                 if (balance > 0 && customer.isBlank()) {
                     message = "Udhaar ke liye customer ka naam zaroori hai."
-                    return@onClick
+                    return@Button
                 }
                 val savedTotal = total
                 vm.makeSale(customer.trim(), paidInt, cart.toList()) {
@@ -350,7 +350,7 @@ fun StockScreen(vm: ShopViewModel) {
             val s = sale.toIntOrNull()
             if (name.isBlank() || c == null || s == null || c <= 0 || s <= 0) {
                 message = "Naam aur dono price sahi likhein."
-                return@onClick
+                return@Button
             }
             vm.addProduct(name.trim(), c, s)
             name = ""
@@ -396,7 +396,7 @@ fun ProductStockCard(p: Product, stock: List<Stock>, onAdd: (String, Int) -> Uni
                 )
                 Button(onClick = {
                     val q = qty.toIntOrNull()
-                    if (size.isBlank() || q == null || q <= 0) return@onClick
+                    if (size.isBlank() || q == null || q <= 0) return@Button
                     onAdd(size.trim(), q)
                     size = ""
                     qty = ""
@@ -451,7 +451,7 @@ fun KhataScreen(vm: ShopViewModel) {
                                                 val amt = payAmount.toIntOrNull()
                                                 if (amt == null || amt <= 0 || amt > bal) {
                                                     message = "Raqam 1 se $bal ke darmiyan likhein."
-                                                    return@onClick
+                                                    return@Button
                                                 }
                                                 vm.recordPayment(s.id, amt)
                                                 paySaleId = null
