@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <!-- Green square background -->
+    <path
+        android:fillColor="#1B5E20"
+        android:pathData="M0,0h100v100H0z" />
+    <!-- White "ZA" monogram: a bold Z shape -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M20,22H80V32L38,68H80V78H20V68L62,32H20Z" />
+</vector>
