@@ -2,6 +2,9 @@ package com.zashoes.sales
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -48,15 +51,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -103,6 +109,32 @@ fun shoeImageFor(productId: Long): Int {
         1 -> R.drawable.shoe_sandal
         else -> R.drawable.shoe_formal
     }
+}
+
+// Downscaled thumbnail of a photo file (null if missing/unreadable).
+// Used for the shopkeeper's own article photos.
+fun loadThumb(path: String): androidx.compose.ui.graphics.ImageBitmap? {
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        var sample = 1
+        while (bounds.outWidth / sample > 400 || bounds.outHeight / sample > 400) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        BitmapFactory.decodeFile(path, opts)?.asImageBitmap()
+    } catch (e: Exception) {
+        null
+    }
+}
+
+// Shares a file (CSV report / JSON backup) via any app.
+fun shareFile(context: Context, file: File, mime: String, title: String) {
+    val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = mime
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, title))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -172,6 +204,20 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
     val stock by vm.allStock.collectAsState()
     val context = LocalContext.current
     var receiptSale by remember { mutableStateOf<Sale?>(null) }
+    var confirmDeleteSale by remember { mutableStateOf<Sale?>(null) }
+    var backupMsg by remember { mutableStateOf("") }
+    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            try {
+                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
+                vm.restoreFromJson(text) { ok ->
+                    backupMsg = if (ok) "Backup restore ho gaya." else "Backup file theek nahi hai — restore nahi hua."
+                }
+            } catch (e: Exception) {
+                backupMsg = "Backup file parhi nahi ja saki."
+            }
+        }
+    }
 
     val start = remember { startOfDayMillis() }
     val monthStart = remember { startOfMonthMillis() }
@@ -189,6 +235,9 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
         .sumOf { (it.price - (costMap[it.productId] ?: 0)) * it.qty }
     val totalUdhaar = sales.sumOf { vm.balanceOf(it, payments) }
     val lowStock = stock.count { it.qty <= 2 }
+    val topSellers = items.groupBy { it.productId }
+        .mapValues { (_, list) -> list.sumOf { it.qty } }
+        .entries.sortedByDescending { it.value }.take(5)
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)
@@ -223,6 +272,12 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
             OutlinedButton(onClick = { go("khata") }) { Text("Khata") }
         }
         Spacer(Modifier.height(12.dp))
+        Text("Sab se zyada bikne wale", style = MaterialTheme.typography.titleMedium)
+        if (topSellers.isEmpty()) Text("Abhi koi sale nahi hui.")
+        topSellers.forEach { (pid, q) ->
+            Text("${nameMap[pid] ?: "Article"} — $q joray", style = MaterialTheme.typography.bodyMedium)
+        }
+        Spacer(Modifier.height(12.dp))
         Text("Haal ki Salein (receipt dekhne ke liye dabayein)", style = MaterialTheme.typography.titleMedium)
         sales.take(10).forEach { s ->
             val bal = vm.balanceOf(s, payments)
@@ -240,6 +295,23 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
                 }
             }
         }
+        Spacer(Modifier.height(12.dp))
+        Text("Backup aur Report", style = MaterialTheme.typography.titleMedium)
+        Text("Backup file WhatsApp/Drive par bhej dein taake data kabhi zaya na ho.", style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                val file = File(context.cacheDir, "za-shoes-sales.csv")
+                file.writeText(vm.exportSalesCsv())
+                shareFile(context, file, "text/csv", "Sales Report Share karein")
+            }) { Text("Sales CSV") }
+            OutlinedButton(onClick = {
+                val file = File(context.cacheDir, "za-shoes-backup.json")
+                file.writeText(vm.backupJson())
+                shareFile(context, file, "application/json", "Backup Share karein")
+            }) { Text("Backup Share") }
+            OutlinedButton(onClick = { restoreLauncher.launch("*/*") }) { Text("Backup Restore") }
+        }
+        if (backupMsg.isNotEmpty()) Text(backupMsg)
     }
 
     val rs = receiptSale
@@ -248,7 +320,7 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
         val lines = items.filter { it.saleId == rs.id }.map { item ->
             "${nameMap[item.productId] ?: "Article"} (Size ${item.size}) x ${item.qty} = Rs ${item.price * item.qty}"
         }
-        val text = buildReceiptText(rs.date, lines, rs.total, rs.paid, bal)
+        val text = buildReceiptText(rs.date, lines, rs.total, rs.paid, bal, rs.discount)
         AlertDialog(
             onDismissRequest = { receiptSale = null },
             containerColor = Color.White,
@@ -256,6 +328,10 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(text, fontFamily = FontFamily.Monospace)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = { confirmDeleteSale = rs }) {
+                        Text("Sale wapas lo (stock wapas)")
+                    }
                 }
             },
             confirmButton = {
@@ -263,6 +339,23 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
             },
             dismissButton = {
                 TextButton(onClick = { receiptSale = null }) { Text("Band karein") }
+            }
+        )
+    }
+
+    val cds = confirmDeleteSale
+    if (cds != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteSale = null },
+            title = { Text("Sale wapas lein?") },
+            text = { Text("Is bill ki sale delete ho jayegi aur stock wapas aa jayega. Yeh wapas nahi hoga.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteSale(cds.id) { receiptSale = null; confirmDeleteSale = null }
+                }) { Text("Haan, wapas lo", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteSale = null }) { Text("Nahi") }
             }
         )
     }
@@ -280,6 +373,7 @@ fun SaleScreen(vm: ShopViewModel) {
     var qty by remember { mutableStateOf(1) }
     var customer by remember { mutableStateOf("") }
     var paid by remember { mutableStateOf("") }
+    var discount by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
     var lastReceipt by remember { mutableStateOf<Pair<Sale, List<CartLine>>?>(null) }
     val cart = remember { mutableStateListOf<CartLine>() }
@@ -290,7 +384,9 @@ fun SaleScreen(vm: ShopViewModel) {
     val stockQty = selected?.let { p ->
         stock.find { it.productId == p.id && it.size == size }?.qty ?: 0
     } ?: 0
-    val total = cart.sumOf { it.product.salePrice * it.qty }
+    val cartSum = cart.sumOf { it.product.salePrice * it.qty }
+    val discountInt = discount.toIntOrNull() ?: 0
+    val total = (cartSum - discountInt).coerceAtLeast(0)
     val paidInt = paid.toIntOrNull() ?: 0
     val balance = (total - paidInt).coerceAtLeast(0)
 
@@ -387,6 +483,14 @@ fun SaleScreen(vm: ShopViewModel) {
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(8.dp))
+        TextField(
+            value = discount,
+            onValueChange = { discount = it.filter { c -> c.isDigit() } },
+            label = { Text("Discount (Rs)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
         Text("Total: Rs $total", style = MaterialTheme.typography.titleMedium)
         if (balance > 0) Text("Udhaar banega: Rs $balance", color = MaterialTheme.colorScheme.error)
         Spacer(Modifier.height(8.dp))
@@ -409,10 +513,11 @@ fun SaleScreen(vm: ShopViewModel) {
                     } else {
                         val savedTotal = total
                         val savedCart = cart.toList()
-                        vm.makeSale(customer.trim(), paidInt, savedCart) { sale, lines ->
+                        vm.makeSale(customer.trim(), paidInt, discountInt, savedCart) { sale, lines ->
                             cart.clear()
                             customer = ""
                             paid = ""
+                            discount = ""
                             lastReceipt = sale to lines
                             message = "Sale save ho gayi! Total Rs $savedTotal"
                         }
@@ -434,7 +539,8 @@ fun SaleScreen(vm: ShopViewModel) {
                 lines.map { "${it.product.name} (Size ${it.size}) x ${it.qty} = Rs ${it.product.salePrice * it.qty}" },
                 sale.total,
                 sale.paid,
-                bal
+                bal,
+                sale.discount
             )
             Spacer(Modifier.height(12.dp))
             Card(
@@ -459,6 +565,7 @@ fun SaleScreen(vm: ShopViewModel) {
 fun StockScreen(vm: ShopViewModel) {
     val products by vm.products.collectAsState()
     val stock by vm.allStock.collectAsState()
+    val allItems by vm.allItems.collectAsState()
     var name by remember { mutableStateOf("") }
     var cost by remember { mutableStateOf("") }
     var sale by remember { mutableStateOf("") }
@@ -517,7 +624,7 @@ fun StockScreen(vm: ShopViewModel) {
         Spacer(Modifier.height(8.dp))
         LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
             items(filtered, key = { it.id }) { p ->
-                ProductStockCard(p, stock.filter { it.productId == p.id }) { sz, q ->
+                ProductStockCard(vm, p, stock.filter { it.productId == p.id }, allItems.any { it.productId == p.id }) { sz, q ->
                     vm.addStock(p.id, sz, q)
                 }
             }
@@ -526,23 +633,96 @@ fun StockScreen(vm: ShopViewModel) {
 }
 
 @Composable
-fun ProductStockCard(p: Product, stock: List<Stock>, onAdd: (String, Int) -> Unit) {
+fun ProductStockCard(vm: ShopViewModel, p: Product, stock: List<Stock>, hasSales: Boolean, onAdd: (String, Int) -> Unit) {
     var size by remember { mutableStateOf("") }
     var qty by remember { mutableStateOf("") }
+    var editing by remember { mutableStateOf(false) }
+    var editName by remember { mutableStateOf(p.name) }
+    var editCost by remember { mutableStateOf(p.costPrice.toString()) }
+    var editSale by remember { mutableStateOf(p.salePrice.toString()) }
+    var msg by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) vm.saveProductPhoto(p.id, uri, context)
+    }
+    val thumb = remember(p.imagePath) { if (p.imagePath.isNotBlank()) loadThumb(p.imagePath) else null }
     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(Modifier.padding(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(
-                    painter = painterResource(id = shoeImageFor(p.id)),
-                    contentDescription = p.name,
-                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Crop
-                )
+                if (thumb != null) {
+                    Image(
+                        bitmap = thumb,
+                        contentDescription = p.name,
+                        modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Image(
+                        painter = painterResource(id = shoeImageFor(p.id)),
+                        contentDescription = p.name,
+                        modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                }
                 Column(Modifier.padding(start = 8.dp)) {
                     Text(p.name, style = MaterialTheme.typography.titleSmall)
                     Text("Kharid Rs ${p.costPrice}  |  Sale Rs ${p.salePrice}", style = MaterialTheme.typography.bodySmall)
                 }
             }
+            if (editing) {
+                Spacer(Modifier.height(8.dp))
+                TextField(
+                    value = editName,
+                    onValueChange = { editName = it },
+                    label = { Text("Article ka naam") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextField(
+                        value = editCost,
+                        onValueChange = { editCost = it.filter { c -> c.isDigit() } },
+                        label = { Text("Kharid price") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextField(
+                        value = editSale,
+                        onValueChange = { editSale = it.filter { c -> c.isDigit() } },
+                        label = { Text("Sale price") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val c = editCost.toIntOrNull()
+                        val s = editSale.toIntOrNull()
+                        if (editName.isBlank() || c == null || s == null || c <= 0 || s <= 0) {
+                            msg = "Naam aur dono price sahi likhein."
+                        } else {
+                            vm.updateProduct(p.copy(name = editName.trim(), costPrice = c, salePrice = s))
+                            editing = false
+                            msg = "Article update ho gaya."
+                        }
+                    }) { Text("Save karo") }
+                    OutlinedButton(onClick = { editing = false }) { Text("Cancel") }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        editName = p.name
+                        editCost = p.costPrice.toString()
+                        editSale = p.salePrice.toString()
+                        editing = true
+                    }) { Text("Edit") }
+                    OutlinedButton(onClick = { photoLauncher.launch("image/*") }) { Text("Photo lagao") }
+                    if (!hasSales) {
+                        OutlinedButton(onClick = { vm.deleteProduct(p.id) }) { Text("Delete") }
+                    }
+                }
+                if (hasSales) Text("Is article ki salein hain, is liye delete nahi ho sakta.", style = MaterialTheme.typography.bodySmall)
+            }
+            if (msg.isNotEmpty()) Text(msg)
             if (stock.isEmpty()) Text("Stock mein kuch nahi.")
             stock.forEach { s -> Text("Size ${s.size}: ${s.qty} joray") }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -579,14 +759,23 @@ fun KhataScreen(vm: ShopViewModel) {
     var paySaleId by remember { mutableStateOf<Long?>(null) }
     var payAmount by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
+    var search by remember { mutableStateOf("") }
 
     val byCustomer = sales.filter { it.customer.isNotBlank() }.groupBy { it.customer }
     val withBalance = byCustomer
         .mapValues { (_, list) -> list.sumOf { vm.balanceOf(it, payments) } }
         .filterValues { it > 0 }
+        .filterKeys { it.contains(search, ignoreCase = true) }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Text("Khata (Udhaar)", style = MaterialTheme.typography.headlineMedium)
+        Spacer(Modifier.height(8.dp))
+        TextField(
+            value = search,
+            onValueChange = { search = it },
+            label = { Text("Customer dhoondhein") },
+            modifier = Modifier.fillMaxWidth()
+        )
         if (message.isNotEmpty()) Text(message)
         if (withBalance.isEmpty()) Text("Kisi ka udhaar baaqi nahi hai.")
         LazyColumn(Modifier.fillMaxSize()) {

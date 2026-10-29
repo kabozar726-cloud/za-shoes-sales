@@ -7,7 +7,8 @@ fun buildReceiptText(
     lines: List<String>,
     total: Int,
     paid: Int,
-    balance: Int
+    balance: Int,
+    discount: Int = 0
 ): String {
     val sb = StringBuilder()
     sb.appendLine("ZA SHOES")
@@ -18,6 +19,7 @@ fun buildReceiptText(
     sb.appendLine("------------------------------")
     lines.forEach { sb.appendLine(it) }
     sb.appendLine("------------------------------")
+    if (discount > 0) sb.appendLine("Discount: -Rs $discount")
     sb.appendLine("Total: Rs $total")
     sb.appendLine("Jama: Rs $paid")
     if (balance > 0) {
