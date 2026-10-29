@@ -2,6 +2,7 @@ package com.zashoes.sales
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,14 +11,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,8 +46,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
@@ -82,6 +90,19 @@ fun shareText(context: Context, text: String) {
         putExtra(Intent.EXTRA_TEXT, text)
     }
     context.startActivity(Intent.createChooser(intent, "Receipt Share karein"))
+}
+
+// Shop address shown on the home screen and on every receipt.
+const val SHOP_ADDRESS = "Wall Street Plaza, Shop No. 1, Basement, G-15 Markaz, Islamabad"
+
+// One of the three shoe photos, cycled by article id, so every article
+// row shows a real shoe image.
+fun shoeImageFor(productId: Long): Int {
+    return when ((productId % 3).toInt()) {
+        0 -> R.drawable.shoe_sneakers
+        1 -> R.drawable.shoe_sandal
+        else -> R.drawable.shoe_formal
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -172,6 +193,15 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.shoe_sneakers),
+            contentDescription = "ZA Shoes",
+            modifier = Modifier.fillMaxWidth().height(170.dp).clip(RoundedCornerShape(12.dp)),
+            contentScale = ContentScale.Crop
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(SHOP_ADDRESS, style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(8.dp))
         Text("Aaj ka hisaab", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -221,10 +251,11 @@ fun HomeScreen(vm: ShopViewModel, go: (String) -> Unit) {
         val text = buildReceiptText(rs.date, lines, rs.total, rs.paid, bal)
         AlertDialog(
             onDismissRequest = { receiptSale = null },
+            containerColor = Color.White,
             title = { Text("Receipt — ZA Shoes") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Text(text)
+                    Text(text, fontFamily = FontFamily.Monospace)
                 }
             },
             confirmButton = {
@@ -327,9 +358,15 @@ fun SaleScreen(vm: ShopViewModel) {
         if (cart.isEmpty()) Text("Cart khaali hai.")
         cart.forEachIndexed { i, line ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(id = shoeImageFor(line.product.id)),
+                    contentDescription = line.product.name,
+                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)),
+                    contentScale = ContentScale.Crop
+                )
                 Text(
                     "${line.product.name} (Size ${line.size}) x ${line.qty} = Rs ${line.product.salePrice * line.qty}",
-                    Modifier.weight(1f)
+                    Modifier.weight(1f).padding(start = 8.dp)
                 )
                 OutlinedButton(onClick = { cart.removeAt(i) }) { Text("✕") }
             }
@@ -400,10 +437,13 @@ fun SaleScreen(vm: ShopViewModel) {
                 bal
             )
             Spacer(Modifier.height(12.dp))
-            Card(Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
                 Column(Modifier.padding(12.dp)) {
                     Text("Receipt — ZA Shoes", style = MaterialTheme.typography.titleMedium)
-                    Text(text)
+                    Text(text, fontFamily = FontFamily.Monospace)
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { shareText(context, text) }) { Text("Receipt Share karein") }
@@ -491,8 +531,18 @@ fun ProductStockCard(p: Product, stock: List<Stock>, onAdd: (String, Int) -> Uni
     var qty by remember { mutableStateOf("") }
     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(Modifier.padding(10.dp)) {
-            Text(p.name, style = MaterialTheme.typography.titleSmall)
-            Text("Kharid Rs ${p.costPrice}  |  Sale Rs ${p.salePrice}", style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(id = shoeImageFor(p.id)),
+                    contentDescription = p.name,
+                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)),
+                    contentScale = ContentScale.Crop
+                )
+                Column(Modifier.padding(start = 8.dp)) {
+                    Text(p.name, style = MaterialTheme.typography.titleSmall)
+                    Text("Kharid Rs ${p.costPrice}  |  Sale Rs ${p.salePrice}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
             if (stock.isEmpty()) Text("Stock mein kuch nahi.")
             stock.forEach { s -> Text("Size ${s.size}: ${s.qty} joray") }
             Row(verticalAlignment = Alignment.CenterVertically) {

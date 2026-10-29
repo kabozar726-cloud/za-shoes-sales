@@ -11,6 +11,8 @@ fun buildReceiptText(
 ): String {
     val sb = StringBuilder()
     sb.appendLine("ZA SHOES")
+    sb.appendLine("Wall Street Plaza, Shop No. 1, Basement")
+    sb.appendLine("G-15 Markaz, Islamabad")
     sb.appendLine("Sale Receipt")
     sb.appendLine(fmtDate(date))
     sb.appendLine("------------------------------")
